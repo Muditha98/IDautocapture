@@ -98,18 +98,26 @@ export class AppComponent implements OnInit, OnDestroy {
     console.log(`Starting detection for ${this.selectedDocType} from ${this.selectedCountry}`);
 
     try {
-      // Request higher resolution for better quality
+      // Reset flags first to avoid race conditions
+      this.isStreaming = false;
+      this.capturingImage = false;
+      this.errorMessage = '';
+      
+      console.log('Requesting camera access...');
+      
+      // Request camera with more flexible constraints
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 1920 },  // Higher resolution for better quality
-          height: { ideal: 1080 },
-          facingMode: 'environment' // Use back camera on mobile if available
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 }
         }
       });
       
+      console.log('Camera access granted!');
+      
+      // Set video source
       this.videoElement.nativeElement.srcObject = this.stream;
       this.isStreaming = true;
-      this.errorMessage = '';
       
       // Reset auto-capture related properties
       this.highConfidenceStartTime = 0;
@@ -117,7 +125,6 @@ export class AppComponent implements OnInit, OnDestroy {
       this.capturedImage = null;
       this.originalCapturedImage = null;
       this.flashActive = false;
-      this.capturingImage = false;
       
       // Wait for video to be ready
       this.videoElement.nativeElement.onloadedmetadata = () => {
@@ -125,9 +132,43 @@ export class AppComponent implements OnInit, OnDestroy {
         this.resizeCanvas();
         this.startDetection();
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error accessing camera:', error);
-      this.errorMessage = 'Failed to access camera. Please ensure camera permissions are granted.';
+      if (error.name === 'NotAllowedError') {
+        this.errorMessage = 'Camera access denied. Please allow camera permissions in your browser.';
+      } else if (error.name === 'NotFoundError') {
+        this.errorMessage = 'No camera found. Please connect a camera and try again.';
+      } else if (error.name === 'NotReadableError') {
+        this.errorMessage = 'Camera is in use by another application. Please close other applications and try again.';
+      } else if (error.name === 'OverconstrainedError') {
+        // Try again with simpler constraints
+        try {
+          console.log('Trying with basic constraints...');
+          this.stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          
+          this.videoElement.nativeElement.srcObject = this.stream;
+          this.isStreaming = true;
+          
+          // Reset properties here too
+          this.highConfidenceStartTime = 0;
+          this.highConfidenceTimer = 0;
+          this.capturedImage = null;
+          this.originalCapturedImage = null;
+          this.flashActive = false;
+          this.capturingImage = false;
+          
+          this.videoElement.nativeElement.onloadedmetadata = () => {
+            this.resizeCanvas();
+            this.startDetection();
+          };
+          return;
+        } catch (fallbackError) {
+          console.error('Fallback camera access also failed:', fallbackError);
+          this.errorMessage = 'Could not access camera with basic settings. Please check your camera.';
+        }
+      } else {
+        this.errorMessage = `Failed to access camera: ${error.name || 'Unknown error'}. Please ensure camera permissions are granted.`;
+      }
     }
   }
 
@@ -154,15 +195,22 @@ export class AppComponent implements OnInit, OnDestroy {
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
     
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    console.log(`Canvas resized to ${canvas.width}x${canvas.height}`);
   }
 
   private startDetection(): void {
     this.lastFrameTime = performance.now();
     
     const detectFrame = async (currentTime: number) => {
-      if (!this.isStreaming || this.capturingImage) return;
+      if (!this.isStreaming) return;
+      
+      // Only skip processing, but continue the loop if capturing
+      if (this.capturingImage) {
+        this.animationFrameId = requestAnimationFrame(detectFrame);
+        return;
+      }
       
       // Calculate deltaTime for accurate timing
       const deltaTime = (currentTime - this.lastFrameTime) / 1000; // in seconds
@@ -174,13 +222,13 @@ export class AppComponent implements OnInit, OnDestroy {
       
       if (!ctx) return;
       
-      // Draw video frame to canvas
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      // Get image data for detection
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      
       try {
+        // Draw video frame to canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Get image data for detection
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
         // Run detection
         const result = await this.idCardDetector.detect(imageData);
         this.detections = result.detections;
@@ -271,6 +319,8 @@ export class AppComponent implements OnInit, OnDestroy {
   private captureHighQualityImage(canvas: HTMLCanvasElement, box: number[]): void {
     // Clear any existing timeout
     this.clearCaptureTimeout();
+    
+    console.log('Preparing to capture high quality image...');
     
     // 1. Activate flash
     this.flashActive = true;
