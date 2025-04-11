@@ -2,10 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Autocapture</title>
+  <title>ID Card Detector</title>
   <base href="/">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+  
+  <!-- Add crossorigin attribute to enable SharedArrayBuffer for ONNX Runtime Web -->
+  <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
+  <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.13.1/dist/ort.min.js"></script>
 </head>
 <body>
   <app-root></app-root>
